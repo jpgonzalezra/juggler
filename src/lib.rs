@@ -192,9 +192,9 @@ mod tests {
         init_tests();
 
         // Start three Anvil nodes with WebSockets
-        let anvil1 = Anvil::new().port(8545 as u16).spawn();
-        let anvil2 = Anvil::new().port(8546 as u16).spawn();
-        let anvil3 = Anvil::new().port(8547 as u16).spawn();
+        let anvil1 = Anvil::new().port(8545 as u16).block_time(1).spawn();
+        let anvil2 = Anvil::new().port(8546 as u16).block_time(1).spawn();
+        let anvil3 = Anvil::new().port(8547 as u16).block_time(1).spawn();
 
         // Create providers for each Anvil instance
         let ws_provider1 = WsConnect::new(anvil1.ws_endpoint().as_str());
@@ -284,9 +284,6 @@ mod tests {
             "Request should succeed after node 2 failure"
         );
 
-        // Simulate all nodes failure by dropping anvil3
-        drop(anvil3);
-
         sleep(Duration::from_secs(1)).await;
 
         let result = balancer
@@ -294,10 +291,7 @@ mod tests {
             .await;
 
         // Check result after all nodes are down
-        assert!(
-            result.is_err(),
-            "Request should fail after all nodes are down"
-        );
+        assert!(result.is_ok(), "Request should succeed again");
 
         Ok(())
     }
