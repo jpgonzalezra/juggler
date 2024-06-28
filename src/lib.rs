@@ -1,12 +1,17 @@
-use alloy::providers::Provider;
 use alloy::providers::RootProvider;
 use alloy::pubsub::PubSubFrontend;
+use alloy::pubsub::Subscription;
+use alloy::transports::RpcError;
 use alloy::transports::TransportError;
+use alloy::transports::TransportErrorKind;
+use serde::de::DeserializeOwned;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use tokio::sync::RwLock;
+use tokio_stream::StreamExt;
 
 #[derive(Clone, Debug)]
 enum WsOrIpc {
@@ -17,7 +22,6 @@ enum WsOrIpc {
 struct RpcBalancer {
     providers: Vec<Arc<WsOrIpc>>,
     current: AtomicUsize,
-    last_node: RwLock<usize>,
 }
 
 impl RpcBalancer {
@@ -25,25 +29,15 @@ impl RpcBalancer {
         RpcBalancer {
             providers,
             current: AtomicUsize::new(0),
-            last_node: RwLock::new(0),
         }
     }
 
-    async fn get_last_node(&self) -> usize {
-        *self.last_node.read().await
-    }
-
-    async fn update_last_node(&self, index: usize) {
-        let mut last_node = self.last_node.write().await;
-        *last_node = index;
-    }
-
-    fn next_provider(&self) -> Arc<WsOrIpc> {
+    pub fn next_provider(&self) -> Arc<WsOrIpc> {
         let index = self.current.fetch_add(1, Ordering::SeqCst) % self.providers.len();
         self.providers[index].clone()
     }
 
-    async fn execute<'a, F, Fut, U>(&'a self, mut func: F) -> Result<U, TransportError>
+    pub async fn execute<'a, F, Fut, U>(&'a self, mut func: F) -> Result<U, TransportError>
     where
         F: FnMut(Arc<WsOrIpc>) -> Fut,
         Fut: std::future::Future<Output = Result<U, TransportError>> + 'a,
@@ -52,14 +46,105 @@ impl RpcBalancer {
             let provider = self.next_provider();
             match func(provider.clone()).await {
                 Ok(result) => {
-                    let index = self.current.load(Ordering::SeqCst) % self.providers.len();
-                    self.update_last_node(index).await;
                     return Ok(result);
                 }
                 Err(_) => continue,
             }
         }
         Err(TransportError::local_usage_str("All providers failed"))
+    }
+
+    pub async fn subscribe<'a, P, R, F, Fut>(
+        &'a self,
+        params: P,
+        mut handle_data: F,
+    ) -> Result<(), TransportError>
+    where
+        P: for<'b> Fn(
+                &'b RootProvider<PubSubFrontend>,
+            ) -> Pin<
+                Box<
+                    dyn Future<Output = Result<Subscription<R>, RpcError<TransportErrorKind>>>
+                        + Send
+                        + 'b,
+                >,
+            > + 'a,
+        R: 'static + DeserializeOwned,
+        F: FnMut(R) -> Fut,
+        Fut: std::future::Future<Output = ()> + 'static,
+    {
+        loop {
+            match self.get_subscription(&params).await {
+                Ok(subscription) => {
+                    let mut stream = subscription.into_stream();
+                    while let Some(data) = stream.next().await {
+                        handle_data(data).await;
+                    }
+                }
+                Err(e) => {
+                    println!("Error obtaining subscription: {:?}", e);
+                }
+            }
+        }
+    }
+
+    async fn get_subscription<'a, P, R>(
+        &'a self,
+        params: &P,
+    ) -> Result<Subscription<R>, TransportError>
+    where
+        P: for<'b> Fn(
+                &'b RootProvider<PubSubFrontend>,
+            ) -> Pin<
+                Box<
+                    dyn Future<Output = Result<Subscription<R>, RpcError<TransportErrorKind>>>
+                        + Send
+                        + 'b,
+                >,
+            > + 'a,
+        R: 'static + DeserializeOwned,
+    {
+        for _ in 0..self.providers.len() {
+            let provider = self.next_provider();
+            match self.try_subscribe(provider.clone(), params).await {
+                Ok(subscription) => return Ok(subscription),
+                Err(_) => {
+                    // if (provider === 0) => exception
+                    println!("Switching to a different provider. Retrying subscription...");
+                    continue;
+                }
+            }
+        }
+        Err(TransportError::local_usage_str("All providers failed"))
+    }
+
+    async fn try_subscribe<'a, P, R>(
+        &'a self,
+        provider: Arc<WsOrIpc>,
+        params: &P,
+    ) -> Result<Subscription<R>, TransportError>
+    where
+        P: for<'b> Fn(
+                &'b RootProvider<PubSubFrontend>,
+            ) -> Pin<
+                Box<
+                    dyn Future<Output = Result<Subscription<R>, RpcError<TransportErrorKind>>>
+                        + Send
+                        + 'b,
+                >,
+            > + 'a,
+        R: 'static + DeserializeOwned,
+    {
+        match &*provider {
+            WsOrIpc::Ws(ws_provider) => {
+                let subscription = params(ws_provider).await?;
+                Ok(subscription)
+            }
+            WsOrIpc::Ipc(ipc_provider) => {
+                let subscription = params(ipc_provider).await?;
+                Ok(subscription)
+            }
+        }
     }
 }
 
@@ -68,6 +153,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use alloy::providers::Provider;
     use alloy::{
         node_bindings::Anvil,
         providers::{ProviderBuilder, WsConnect},
@@ -184,6 +270,75 @@ mod tests {
             result.is_err(),
             "Request should fail after all nodes are down"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rpc_balancer_subscribe_blocks() -> Result<(), RpcError<String>> {
+        // Start three Anvil nodes with WebSockets
+        let anvil1 = Anvil::new().port(8545 as u16).block_time(1).spawn();
+        let anvil2 = Anvil::new().port(8546 as u16).block_time(1).spawn();
+        let anvil3 = Anvil::new().port(8547 as u16).block_time(1).spawn();
+
+        // Create providers for each Anvil instance
+        let ws_provider1 = WsConnect::new(anvil1.ws_endpoint().as_str());
+        let ws_provider2 = WsConnect::new(anvil2.ws_endpoint().as_str());
+        let ws_provider3 = WsConnect::new(anvil3.ws_endpoint().as_str());
+
+        // Wrap them in Providers
+        let provider1 = Arc::new(WsOrIpc::Ws(
+            ProviderBuilder::new()
+                .on_ws(ws_provider1)
+                .await
+                .map_err(|_| RpcError::local_usage_str("provider1 error"))?,
+        ));
+        let provider2 = Arc::new(WsOrIpc::Ws(
+            ProviderBuilder::new()
+                .on_ws(ws_provider2)
+                .await
+                .map_err(|_| RpcError::local_usage_str("provider2 error"))?,
+        ));
+        let provider3 = Arc::new(WsOrIpc::Ws(
+            ProviderBuilder::new()
+                .on_ws(ws_provider3)
+                .await
+                .map_err(|_| RpcError::local_usage_str("provider3 error"))?,
+        ));
+
+        // Initialize RpcBalancer with the providers
+        let balancer = Arc::new(RpcBalancer::new(vec![
+            provider1.clone(),
+            provider2.clone(),
+            provider3.clone(),
+        ]));
+
+        // Use the balancer to subscribe to blocks
+        let subscribe_handle = tokio::spawn(async move {
+            let result = balancer
+                .subscribe(
+                    |provider| Box::pin(provider.subscribe_blocks()),
+                    |block| async move {
+                        println!("New block: {:?}", block);
+                    },
+                )
+                .await;
+
+            assert!(
+                result.is_err(),
+                "Subscription should eventually fail if all nodes are down"
+            );
+        });
+
+        // Simulate node failures
+        sleep(Duration::from_secs(2)).await;
+        drop(anvil1);
+
+        sleep(Duration::from_secs(2)).await;
+        drop(anvil2);
+
+        // Wait for the subscription task to finish
+        _ = tokio::time::timeout(Duration::from_secs(10), subscribe_handle).await;
 
         Ok(())
     }
