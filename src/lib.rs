@@ -1,9 +1,7 @@
 use alloy::providers::RootProvider;
 use alloy::pubsub::PubSubFrontend;
 use alloy::pubsub::Subscription;
-use alloy::transports::RpcError;
-use alloy::transports::TransportError;
-use alloy::transports::TransportErrorKind;
+use alloy::transports::{RpcError, TransportError, TransportErrorKind};
 use serde::de::DeserializeOwned;
 use std::future::Future;
 use std::pin::Pin;
@@ -12,6 +10,7 @@ use std::sync::{
     Arc,
 };
 use tokio_stream::StreamExt;
+use tracing::{error, info, warn};
 
 #[derive(Clone, Debug)]
 enum WsOrIpc {
@@ -69,7 +68,7 @@ impl RpcBalancer {
                         + 'b,
                 >,
             > + 'a,
-        R: 'static + DeserializeOwned,
+        R: 'static + DeserializeOwned + std::fmt::Debug,
         F: FnMut(R) -> Fut,
         Fut: std::future::Future<Output = ()> + 'static,
     {
@@ -78,11 +77,12 @@ impl RpcBalancer {
                 Ok(subscription) => {
                     let mut stream = subscription.into_stream();
                     while let Some(data) = stream.next().await {
+                        info!("New block: {:?}", data);
                         handle_data(data).await;
                     }
                 }
                 Err(e) => {
-                    println!("Error obtaining subscription: {:?}", e);
+                    error!("Error obtaining subscription: {:?}", e);
                 }
             }
         }
@@ -102,15 +102,14 @@ impl RpcBalancer {
                         + 'b,
                 >,
             > + 'a,
-        R: 'static + DeserializeOwned,
+        R: 'static + DeserializeOwned + std::fmt::Debug,
     {
         for _ in 0..self.providers.len() {
             let provider = self.next_provider();
             match self.try_subscribe(provider.clone(), params).await {
                 Ok(subscription) => return Ok(subscription),
-                Err(_) => {
-                    // if (provider === 0) => exception
-                    println!("Switching to a different provider. Retrying subscription...");
+                Err(e) => {
+                    warn!("Failed to subscribe with the current provider: {:?}. Switching to a different provider and retrying...", e);
                     continue;
                 }
             }
@@ -133,7 +132,7 @@ impl RpcBalancer {
                         + 'b,
                 >,
             > + 'a,
-        R: 'static + DeserializeOwned,
+        R: 'static + DeserializeOwned + std::fmt::Debug,
     {
         match &*provider {
             WsOrIpc::Ws(ws_provider) => {
@@ -151,6 +150,7 @@ impl RpcBalancer {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+    use sysinfo::System;
 
     use super::*;
     use alloy::providers::Provider;
@@ -161,8 +161,36 @@ mod tests {
     };
     use tokio::time::sleep;
 
+    fn kill_anvil_processes() {
+        let mut system = System::new_all();
+        system.refresh_all();
+
+        let ports_to_check = [8545, 8546, 8547];
+
+        for (_, process) in system.processes() {
+            for port in &ports_to_check {
+                if process.name().contains("anvil")
+                    && process
+                        .cmd()
+                        .iter()
+                        .any(|arg| arg.contains(&port.to_string()))
+                {
+                    println!("Killing process: {} on port: {}", process.name(), port);
+                    _ = process.kill()
+                }
+            }
+        }
+    }
+
+    fn init_tests() {
+        tracing_subscriber::fmt::init();
+        kill_anvil_processes();
+    }
+
     #[tokio::test]
     async fn test_rpc_balancer_with_node_failures() -> Result<(), RpcError<String>> {
+        init_tests();
+
         // Start three Anvil nodes with WebSockets
         let anvil1 = Anvil::new().port(8545 as u16).spawn();
         let anvil2 = Anvil::new().port(8546 as u16).spawn();
@@ -276,10 +304,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_rpc_balancer_subscribe_blocks() -> Result<(), RpcError<String>> {
+        init_tests();
+
         // Start three Anvil nodes with WebSockets
-        let anvil1 = Anvil::new().port(8545 as u16).block_time(1).spawn();
-        let anvil2 = Anvil::new().port(8546 as u16).block_time(1).spawn();
-        let anvil3 = Anvil::new().port(8547 as u16).block_time(1).spawn();
+        let anvil1 = Anvil::new().port(8548 as u16).block_time(1).spawn();
+        let anvil2 = Anvil::new().port(8549 as u16).block_time(1).spawn();
+        let anvil3 = Anvil::new().port(8550 as u16).block_time(1).spawn();
 
         // Create providers for each Anvil instance
         let ws_provider1 = WsConnect::new(anvil1.ws_endpoint().as_str());
