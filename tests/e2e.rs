@@ -2,7 +2,7 @@
 mod tests {
     use alloy::transports::TransportError;
     use alloy_resilient_rpc::provider::{RpcBalancer, WsOrIpc};
-    use std::sync::Arc;
+    use std::sync::{Arc, Once};
     use std::time::Duration;
     use sysinfo::System;
 
@@ -13,6 +13,8 @@ mod tests {
         transports::RpcError,
     };
     use tokio::time::sleep;
+
+    static INIT: Once = Once::new();
 
     fn kill_anvil_processes() {
         let mut system = System::new_all();
@@ -36,7 +38,9 @@ mod tests {
     }
 
     fn init_tests() {
-        tracing_subscriber::fmt::init();
+        INIT.call_once(|| {
+            tracing_subscriber::fmt::init();
+        });
         kill_anvil_processes();
     }
 
@@ -154,9 +158,9 @@ mod tests {
         init_tests();
 
         // Start three Anvil nodes with WebSockets
-        let anvil1 = Anvil::new().port(8548 as u16).block_time(1).spawn();
-        let anvil2 = Anvil::new().port(8549 as u16).block_time(1).spawn();
-        let anvil3 = Anvil::new().port(8550 as u16).block_time(1).spawn();
+        let anvil1 = Anvil::new().port(8545 as u16).block_time(1).spawn();
+        let anvil2 = Anvil::new().port(8546 as u16).block_time(1).spawn();
+        let anvil3 = Anvil::new().port(8547 as u16).block_time(1).spawn();
 
         // Create providers for each Anvil instance
         let ws_provider1 = WsConnect::new(anvil1.ws_endpoint().as_str());
@@ -216,6 +220,80 @@ mod tests {
 
         // Wait for the subscription task to finish
         _ = tokio::time::timeout(Duration::from_secs(5), subscribe_handle).await;
+
+        Ok(())
+    }
+
+    // #[tokio::test]
+    async fn test_rpc_balancer_with_timeouts() -> Result<(), RpcError<String>> {
+        init_tests();
+
+        // Start two Anvil nodes with WebSockets
+        let anvil1 = Anvil::new().port(8545 as u16).block_time(1).spawn();
+        let anvil2 = Anvil::new().port(8546 as u16).block_time(1).spawn();
+
+        // Create providers for each Anvil instance
+        let ws_provider1 = WsConnect::new(anvil1.ws_endpoint().as_str());
+        let ws_provider2 = WsConnect::new(anvil2.ws_endpoint().as_str());
+
+        // Wrap them in Providers
+        let provider1 = Arc::new(WsOrIpc::Ws(
+            ProviderBuilder::new()
+                .on_ws(ws_provider1)
+                .await
+                .map_err(|_| RpcError::local_usage_str("provider1 error"))?,
+        ));
+        let provider2 = Arc::new(WsOrIpc::Ws(
+            ProviderBuilder::new()
+                .on_ws(ws_provider2)
+                .await
+                .map_err(|_| RpcError::local_usage_str("provider2 error"))?,
+        ));
+
+        // Initialize RpcBalancer with the providers
+        let balancer = Arc::new(RpcBalancer::new(vec![provider1.clone(), provider2.clone()]));
+
+        // Clone the balancer for the subscription handle
+
+        // Use the balancer to subscribe to blocks
+        let subscribe_handle = tokio::spawn(async move {
+            let result = balancer
+                .subscribe(
+                    |provider| Box::pin(provider.subscribe_blocks()),
+                    |block| async move {
+                        println!("New block: {:?}", block);
+                    },
+                )
+                .await;
+
+            assert!(
+                result.is_err(),
+                "Subscription should eventually fail if all nodes are down"
+            );
+        });
+
+        // Simulate node timeouts
+        sleep(Duration::from_secs(2)).await;
+
+        // Temporarily stop anvil1
+        drop(anvil1);
+
+        // Wait a bit and then restart anvil1
+        sleep(Duration::from_secs(5)).await;
+
+        // Temporarily stop anvil2
+        drop(anvil2);
+
+        kill_anvil_processes();
+
+        let _anvil1 = Anvil::new().port(8545 as u16).block_time(1).spawn();
+
+        // Wait a bit and then restart anvil2
+        sleep(Duration::from_secs(5)).await;
+        let _anvil2 = Anvil::new().port(8546 as u16).block_time(1).spawn();
+
+        // Wait for the subscription task to finish
+        _ = tokio::time::timeout(Duration::from_secs(10), subscribe_handle).await;
 
         Ok(())
     }
