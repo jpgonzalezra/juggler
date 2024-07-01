@@ -66,9 +66,11 @@ impl RpcBalancer {
         }
     }
 
-    pub async fn execute<'a, F, Fut, U>(&'a self, mut func: F) -> Result<U, TransportError>
+    pub async fn execute<'a, Fut, U>(
+        &'a self,
+        mut func: Box<HandleDataFn<Arc<WsOrIpc>, Fut>>,
+    ) -> Result<U, TransportError>
     where
-        F: FnMut(Arc<WsOrIpc>) -> Fut,
         Fut: std::future::Future<Output = Result<U, TransportError>> + 'a,
     {
         let count = self.providers.read().await.len();

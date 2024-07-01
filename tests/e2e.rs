@@ -103,7 +103,9 @@ mod tests {
 
         // Use the balancer to execute the dummy request
         let result = balancer
-            .execute(|provider| async move { dummy_request(&provider).await })
+            .execute(Box::new(|provider: Arc<WsOrIpc>| {
+                Box::pin(async move { dummy_request(&provider).await })
+            }))
             .await;
 
         // Check initial result
@@ -116,7 +118,9 @@ mod tests {
         sleep(Duration::from_secs(1)).await;
 
         let result = balancer
-            .execute(|provider| async move { dummy_request(&provider).await })
+            .execute(Box::new(|provider: Arc<WsOrIpc>| {
+                Box::pin(async move { dummy_request(&provider).await })
+            }))
             .await;
 
         // Check result after node 1 failure
@@ -132,7 +136,9 @@ mod tests {
         sleep(Duration::from_secs(1)).await;
 
         let result = balancer
-            .execute(|provider| async move { dummy_request(&provider).await })
+            .execute(Box::new(|provider: Arc<WsOrIpc>| {
+                Box::pin(async move { dummy_request(&provider).await })
+            }))
             .await;
 
         // Check result after node 2 failure
@@ -144,7 +150,9 @@ mod tests {
         sleep(Duration::from_secs(1)).await;
 
         let result = balancer
-            .execute(|provider| async move { dummy_request(&provider).await })
+            .execute(Box::new(|provider: Arc<WsOrIpc>| {
+                Box::pin(async move { dummy_request(&provider).await })
+            }))
             .await;
 
         // Check result after all nodes are down
