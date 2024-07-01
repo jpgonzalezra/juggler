@@ -168,12 +168,16 @@ impl RpcBalancer {
     }
 
     async fn move_to_unavailable_providers(&self, provider: Arc<WsOrIpc>) {
-        let mut providers = self.providers.write().await;
-        if let Some(pos) = providers.iter().position(|p| Arc::ptr_eq(p, &provider)) {
-            providers.remove(pos);
+        {
+            let mut providers = self.providers.write().await;
+            if let Some(pos) = providers.iter().position(|p| Arc::ptr_eq(p, &provider)) {
+                providers.remove(pos);
+            }
         }
-        let mut unavailable_providers = self.unavailable_providers.write().await;
-        unavailable_providers.push_back(provider);
+        {
+            let mut unavailable_providers = self.unavailable_providers.write().await;
+            unavailable_providers.push_back(provider);
+        }
     }
 
     async fn ping_unavailable_providers(&self) {
