@@ -202,16 +202,18 @@ mod tests {
             provider3.clone(),
         ]));
 
-        let mut handle_data = |block| async move {
-            println!("New block: {:?}", block);
-        };
+        let handle_data = Box::new(|block| {
+            Box::pin(async move {
+                println!("New block: {:?}", block);
+            })
+        });
 
         // Use the balancer to subscribe to blocks
         let subscribe_handle = tokio::spawn(async move {
             let result = balancer
                 .subscribe(
                     |provider| Box::pin(provider.subscribe_blocks()),
-                    &mut handle_data,
+                    handle_data,
                 )
                 .await;
 
@@ -265,16 +267,20 @@ mod tests {
 
         // Clone the balancer for the subscription handle
 
-        let mut handle_data = |block| async move {
-            println!("New block: {:?}", block);
-        };
+        let handle_data = Box::new(|block| {
+            Box::pin({
+                async move {
+                    println!("New block: {:?}", block);
+                }
+            })
+        });
 
         // Use the balancer to subscribe to blocks
         let subscribe_handle = tokio::spawn(async move {
             let result = balancer
                 .subscribe(
                     |provider| Box::pin(provider.subscribe_blocks()),
-                    &mut handle_data,
+                    handle_data,
                 )
                 .await;
 

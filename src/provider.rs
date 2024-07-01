@@ -97,7 +97,7 @@ impl RpcBalancer {
     pub async fn subscribe<'a, P, R, Fut>(
         &'a self,
         params: P,
-        handle_data: &'a mut HandleDataFn<R, Fut>,
+        mut handle_data: Box<HandleDataFn<R, Fut>>,
     ) -> Result<(), TransportError>
     where
         P: for<'b> Fn(&'b RootProvider<PubSubFrontend>) -> SubscriptionFuture<'b, R> + 'a,
