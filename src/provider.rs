@@ -178,7 +178,7 @@ impl RpcBalancer {
 
     async fn ping_unavailable_providers(&self) {
         let mut unavailable_providers = self.unavailable_providers.write().await;
-        let mut active_providers = vec![];
+        let mut active_providers = Vec::new();
 
         while let Some(provider) = unavailable_providers.pop_front() {
             match self.ping(provider.clone()).await {
@@ -192,8 +192,6 @@ impl RpcBalancer {
                 }
             }
         }
-
-        drop(unavailable_providers);
 
         if !active_providers.is_empty() {
             let mut providers = self.providers.write().await;
