@@ -41,6 +41,7 @@ impl RpcBalancer {
             current: Arc::new(Mutex::new(0)),
             unavailable_providers: Arc::new(RwLock::new(VecDeque::new())),
         };
+        info!("RpcBalancer initialized.");
 
         let balancer_clone = balancer.clone();
         tokio::spawn(async move {
@@ -57,10 +58,12 @@ impl RpcBalancer {
     pub async fn next_provider(&self) -> Option<Arc<WsOrIpc>> {
         let providers = self.providers.read().await;
         if providers.is_empty() {
+            warn!("No available providers.");
             None
         } else {
             let mut current = self.current.lock().await;
             let index = *current % providers.len();
+            info!("Selecting provider at index {}", index);
             *current = *current + 1;
             Some(providers[index].clone())
         }
@@ -80,16 +83,27 @@ impl RpcBalancer {
             for _ in 0..count {
                 if let Some(provider) = self.next_provider().await {
                     match func(provider.clone()).await {
-                        Ok(result) => return Ok(result),
+                        Ok(result) => {
+                            info!(
+                                "Request executed successfully with provider: {:?}",
+                                provider
+                            );
+                            return Ok(result);
+                        }
                         Err(e) => {
-                            warn!("Provider failed: {:?}. Moving to unavailable providers.", e);
+                            warn!(
+                                "Provider {:?} failed: {:?}. Moving to unavailable providers.",
+                                provider, e
+                            );
                             self.move_to_unavailable_providers(provider).await;
                         }
                     }
                 }
             }
         }
-        Err(TransportError::local_usage_str("All providers failed"))
+        let msg = "All providers failed.";
+        error!(msg);
+        Err(TransportError::local_usage_str(msg))
     }
 
     pub async fn subscribe<'a, P, R, Fut>(
@@ -105,6 +119,7 @@ impl RpcBalancer {
         loop {
             match self.get_subscription(&params).await {
                 Ok(subscription) => {
+                    info!("Subscription obtained successfully.");
                     let mut stream = subscription.into_stream();
                     while let Some(data) = stream.next().await {
                         handle_data(data).await;
@@ -133,7 +148,10 @@ impl RpcBalancer {
         for _ in 0..count {
             if let Some(provider) = self.next_provider().await {
                 match self.try_subscribe(provider.clone(), params).await {
-                    Ok(subscription) => return Ok(subscription),
+                    Ok(subscription) => {
+                        info!("Successfully subscribed with provider: {:?}", provider);
+                        return Ok(subscription);
+                    }
                     Err(e) => {
                         warn!("Failed to subscribe with the current provider: {:?}. Switching to a different provider and retrying...", e);
                         self.move_to_unavailable_providers(provider).await;
@@ -141,7 +159,9 @@ impl RpcBalancer {
                 }
             }
         }
-        Err(TransportError::local_usage_str("All providers failed"))
+        let msg = "All providers failed for subscription.";
+        error!(msg);
+        Err(TransportError::local_usage_str(msg))
     }
 
     async fn try_subscribe<'a, P, R>(
@@ -155,10 +175,15 @@ impl RpcBalancer {
     {
         match &*provider {
             WsOrIpc::Ws(ws_provider) => {
+                info!(
+                    "Trying to subscribe with WebSocket provider: {:?}",
+                    provider
+                );
                 let subscription = params(ws_provider).await?;
                 Ok(subscription)
             }
             WsOrIpc::Ipc(ipc_provider) => {
+                info!("Trying to subscribe with IPC provider: {:?}", provider);
                 let subscription = params(ipc_provider).await?;
                 Ok(subscription)
             }
