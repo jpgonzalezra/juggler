@@ -66,27 +66,25 @@ impl RpcBalancer {
         }
     }
 
-    pub async fn execute<'a, Fut, U>(
-        &'a self,
-        mut func: Box<HandleDataFn<Arc<WsOrIpc>, Fut>>,
-    ) -> Result<U, TransportError>
+    pub async fn execute<'a, F, Fut, U>(&'a self, mut func: F) -> Result<U, TransportError>
     where
-        Fut: std::future::Future<Output = Result<U, TransportError>> + 'a,
+        F: FnMut(Arc<WsOrIpc>) -> Fut + Send,
+        Fut: std::future::Future<Output = Result<U, TransportError>> + Send,
     {
-        let count = self.providers.read().await.len();
+        let providers = self.providers.read().await;
+        let count = providers.len();
         if count == 0 {
             warn!("No available providers. Waiting for 1 second before retrying.");
             sleep(Duration::from_secs(1)).await;
-        }
-        for _ in 0..count {
-            if let Some(provider) = self.next_provider().await {
-                match func(provider.clone()).await {
-                    Ok(result) => {
-                        return Ok(result);
-                    }
-                    Err(e) => {
-                        warn!("Provider failed: {:?}. Moving to unavailable providers.", e);
-                        self.move_to_unavailable_providers(provider).await;
+        } else {
+            for _ in 0..count {
+                if let Some(provider) = self.next_provider().await {
+                    match func(provider.clone()).await {
+                        Ok(result) => return Ok(result),
+                        Err(e) => {
+                            warn!("Provider failed: {:?}. Moving to unavailable providers.", e);
+                            self.move_to_unavailable_providers(provider).await;
+                        }
                     }
                 }
             }
