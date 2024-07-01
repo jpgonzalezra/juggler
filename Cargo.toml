@@ -1,5 +1,5 @@
 [package]
-name = "alloy-resilient-rpc"
+name = "juggler"
 version = "0.1.0"
 edition = "2021"
 
@@ -24,3 +24,7 @@ tracing-subscriber = "0.3"
 
 [dev-dependencies]
 sysinfo = "0.30"
+
+[lib]
+name = "juggler"
+path = "src/lib.rs"
