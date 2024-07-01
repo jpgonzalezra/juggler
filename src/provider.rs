@@ -28,6 +28,10 @@ pub struct RpcBalancer {
     pub unavailable_providers: Arc<RwLock<VecDeque<Arc<WsOrIpc>>>>,
 }
 
+type SubscriptionFuture<'a, R> = Pin<
+    Box<dyn Future<Output = Result<Subscription<R>, RpcError<TransportErrorKind>>> + Send + 'a>,
+>;
+
 impl RpcBalancer {
     pub fn new(providers: Vec<Arc<WsOrIpc>>) -> Self {
         let balancer = RpcBalancer {
@@ -92,15 +96,7 @@ impl RpcBalancer {
         mut handle_data: F,
     ) -> Result<(), TransportError>
     where
-        P: for<'b> Fn(
-                &'b RootProvider<PubSubFrontend>,
-            ) -> Pin<
-                Box<
-                    dyn Future<Output = Result<Subscription<R>, RpcError<TransportErrorKind>>>
-                        + Send
-                        + 'b,
-                >,
-            > + 'a,
+        P: for<'b> Fn(&'b RootProvider<PubSubFrontend>) -> SubscriptionFuture<'b, R> + 'a,
         R: 'static + DeserializeOwned + std::fmt::Debug,
         F: FnMut(R) -> Fut,
         Fut: std::future::Future<Output = ()> + 'static,
