@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use alloy::transports::TransportError;
-    use alloy_resilient_rpc::provider::{RpcBalancer, WsOrIpc};
+    use juggler::provider::{RpcBalancer, WsOrIpc};
     use std::sync::{Arc, Once};
     use std::time::Duration;
     use sysinfo::System;
