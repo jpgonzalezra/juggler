@@ -32,6 +32,8 @@ type SubscriptionFuture<'a, R> = Pin<
     Box<dyn Future<Output = Result<Subscription<R>, RpcError<TransportErrorKind>>> + Send + 'a>,
 >;
 
+type HandleDataFn<R, Fut> = dyn FnMut(R) -> Fut + Send;
+
 impl RpcBalancer {
     pub fn new(providers: Vec<Arc<WsOrIpc>>) -> Self {
         let balancer = RpcBalancer {
@@ -90,15 +92,14 @@ impl RpcBalancer {
         Err(TransportError::local_usage_str("All providers failed"))
     }
 
-    pub async fn subscribe<'a, P, R, F, Fut>(
+    pub async fn subscribe<'a, P, R, Fut>(
         &'a self,
         params: P,
-        mut handle_data: F,
+        handle_data: &'a mut HandleDataFn<R, Fut>,
     ) -> Result<(), TransportError>
     where
         P: for<'b> Fn(&'b RootProvider<PubSubFrontend>) -> SubscriptionFuture<'b, R> + 'a,
         R: 'static + DeserializeOwned + std::fmt::Debug,
-        F: FnMut(R) -> Fut,
         Fut: std::future::Future<Output = ()> + 'static,
     {
         loop {
@@ -121,15 +122,7 @@ impl RpcBalancer {
         params: &P,
     ) -> Result<Subscription<R>, TransportError>
     where
-        P: for<'b> Fn(
-                &'b RootProvider<PubSubFrontend>,
-            ) -> Pin<
-                Box<
-                    dyn Future<Output = Result<Subscription<R>, RpcError<TransportErrorKind>>>
-                        + Send
-                        + 'b,
-                >,
-            > + 'a,
+        P: for<'b> Fn(&'b RootProvider<PubSubFrontend>) -> SubscriptionFuture<'b, R> + 'a,
         R: 'static + DeserializeOwned + std::fmt::Debug,
     {
         let count = self.providers.read().await.len();
@@ -157,15 +150,7 @@ impl RpcBalancer {
         params: &P,
     ) -> Result<Subscription<R>, TransportError>
     where
-        P: for<'b> Fn(
-                &'b RootProvider<PubSubFrontend>,
-            ) -> Pin<
-                Box<
-                    dyn Future<Output = Result<Subscription<R>, RpcError<TransportErrorKind>>>
-                        + Send
-                        + 'b,
-                >,
-            > + 'a,
+        P: for<'b> Fn(&'b RootProvider<PubSubFrontend>) -> SubscriptionFuture<'b, R> + 'a,
         R: 'static + DeserializeOwned + std::fmt::Debug,
     {
         match &*provider {
