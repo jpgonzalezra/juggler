@@ -78,7 +78,7 @@ impl RpcBalancer {
         let count = providers.len();
         if count == 0 {
             warn!("No available providers. Waiting for 1 second before retrying.");
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_secs(1)).await; // TODO: param
         } else {
             for _ in 0..count {
                 if let Some(provider) = self.next_provider().await {
@@ -143,7 +143,7 @@ impl RpcBalancer {
         let count = self.providers.read().await.len();
         if count == 0 {
             warn!("No available providers. Waiting for 1 second before retrying.");
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_secs(1)).await; // TODO: param
         }
         for _ in 0..count {
             if let Some(provider) = self.next_provider().await {
