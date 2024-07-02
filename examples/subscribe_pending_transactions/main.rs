@@ -13,8 +13,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
         .init();
 
-    let ws_provider1 = WsConnect::new("wss://eth-mainnet.g.alchemy.com/v2/<API_KEY>".to_string());
-    let ws_provider2 = WsConnect::new("wss://mainnet.infura.io/ws/v3/<API_KEY>".to_string());
+    let ws_provider1 = WsConnect::new("wss://eth-mainnet.g.alchemy.com/v2/<API-KEY>".to_string());
+    let ws_provider2 = WsConnect::new("wss://eth-mainnet.g.alchemy.com/v2/<API-KEY>".to_string());
 
     let alchemy_ws_provider = Arc::new(WsOrIpc::Ws(
         ProviderBuilder::new().on_ws(ws_provider1).await.unwrap(),
