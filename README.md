@@ -1,10 +1,12 @@
 # Juggler
 
-![Juggler](images/juggler.webp)
-
 Juggler is an alloy-provider "custom" wrapper designed to balance multiple alloy-provider. It manages failures, timeouts, etc, ensuring that requests are not sent to problematic provider until they recover. This solution is ideal for handling the cost and complexity of maintaining Ethereum nodes, providing an efficient and resilient method for load balancing between nodes.
 
-alloy-provider: Interface with an Ethereum blockchain.
+[alloy-provider: Interface with an Ethereum blockchain.](https://github.com/alloy-rs/alloy/tree/main/crates/provider)
+
+<div align="center">
+  <img src="images/juggler.webp" alt="Juggler" width="300"/>
+</div>
 
 ## Project Status
 
@@ -37,7 +39,9 @@ Maintaining and operating Ethereum nodes can be costly and complex. Nodes can ex
 - **Failure Handling**: Identifies problematic nodes and avoids sending requests to them until they recover.
 - **Constant Monitoring**: Regular pings to check node status and reincorporate recovered nodes into the active pool.
 
-## Installation (release WIP)
+## Installation
+
+WIP
 
 To install Juggler, add the dependency to your `Cargo.toml` file:
 
