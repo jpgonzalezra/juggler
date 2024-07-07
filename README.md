@@ -1,12 +1,14 @@
 # Juggler
 
-Juggler is an RPC wrapper designed to balance requests across multiple Ethereum nodes. It manages failures, desynchronizations, and timeouts, ensuring that requests are not sent to problematic nodes until they recover. This solution is ideal for handling the cost and complexity of maintaining Ethereum nodes, providing an efficient and resilient method for load balancing between nodes.
+![Juggler](images/juggler.webp)
+
+Juggler is an RPC alloy provider wrapper designed to balance requests across multiple alloy providers. It manages failures, desynchronizations, and timeouts, ensuring that requests are not sent to problematic nodes until they recover. This solution is ideal for handling the cost and complexity of maintaining Ethereum nodes, providing an efficient and resilient method for load balancing between nodes.
 
 ## Project Status
 
 🚧 **Work in Progress** 🚧
 
-This project is still under development and is not ready for production use. Several essential features are still being implemented and tested. Please keep this in mind before integrating it into critical systems.
+This project is still under development and is not ready for production use. Please keep this in mind before integrating it into critical systems.
 
 ## Table of Contents
 
@@ -23,7 +25,7 @@ This project is still under development and is not ready for production use. Sev
 
 ## Introduction
 
-Juggler is a robust tool for managing multiple RPC providers, ensuring that requests are efficiently distributed among available nodes. This ensures greater service availability and resilience, mitigating common issues such as timeouts and synchronization failures.
+Juggler is a tool for managing multiple alloy providers, ensuring that requests are efficiently distributed among available nodes. This ensures greater service availability and resilience, mitigating common issues such as timeouts and synchronization failures.
 
 ## Motivation
 
@@ -105,7 +107,7 @@ cargo run --example subscribe_pending_transactions
 
 ## Architecture
 
-Juggler is designed to be a resilient and efficient system for handling multiple RPC providers. The architecture consists of the following key components:
+Juggler is designed to be a resilient and efficient system for handling multiple RPC alloy providers. The architecture consists of the following key components:
 
 1. **Providers**: A `HashMap` of providers (WebSocket or IPC) managed through `Arc` and `RwLock` to ensure concurrent access.
 2. **Load Balancer**: The balancer selects the next available provider in a round-robin fashion, ensuring equitable distribution of requests.
