@@ -4,9 +4,12 @@ use alloy::pubsub::PubSubFrontend;
 use alloy::pubsub::Subscription;
 use alloy::transports::{RpcError, TransportError, TransportErrorKind};
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -23,9 +26,10 @@ pub enum WsOrIpc {
 }
 #[derive(Clone, Debug)]
 pub struct RpcBalancer {
-    pub providers: Arc<RwLock<Vec<Arc<WsOrIpc>>>>,
+    pub providers: Arc<RwLock<HashMap<usize, Arc<WsOrIpc>>>>,
     pub current: Arc<Mutex<usize>>,
-    pub unavailable_providers: Arc<RwLock<VecDeque<Arc<WsOrIpc>>>>,
+    pub unavailable_providers: Arc<RwLock<VecDeque<usize>>>,
+    provider_id_counter: Arc<AtomicUsize>,
 }
 
 type SubscriptionFuture<'a, R> = Pin<
@@ -36,10 +40,18 @@ type HandleDataFn<R, Fut> = dyn FnMut(R) -> Fut + Send;
 
 impl RpcBalancer {
     pub fn new(providers: Vec<Arc<WsOrIpc>>) -> Self {
+        let mut provider_map = HashMap::new();
+        let mut provider_id_counter = 0;
+        for provider in providers {
+            provider_map.insert(provider_id_counter, provider);
+            provider_id_counter += 1;
+        }
+
         let balancer = RpcBalancer {
-            providers: Arc::new(RwLock::new(providers)),
+            providers: Arc::new(RwLock::new(provider_map)),
             current: Arc::new(Mutex::new(0)),
             unavailable_providers: Arc::new(RwLock::new(VecDeque::new())),
+            provider_id_counter: Arc::new(AtomicUsize::new(provider_id_counter)),
         };
         info!("RpcBalancer initialized.");
 
@@ -55,7 +67,14 @@ impl RpcBalancer {
         balancer
     }
 
-    pub async fn next_provider(&self) -> Option<Arc<WsOrIpc>> {
+    pub async fn add_provider(&self, provider: Arc<WsOrIpc>) {
+        let mut providers = self.providers.write().await;
+        let new_id = self.provider_id_counter.fetch_add(1, Ordering::SeqCst);
+        providers.insert(new_id, provider);
+        info!("Added new provider with ID {}", new_id);
+    }
+
+    pub async fn next_provider(&self) -> Option<(usize, Arc<WsOrIpc>)> {
         let providers = self.providers.read().await;
         if providers.is_empty() {
             warn!("No available providers.");
@@ -65,7 +84,8 @@ impl RpcBalancer {
             let index = *current % providers.len();
             info!("Selecting provider at index {}", index);
             *current = *current + 1;
-            Some(providers[index].clone())
+            let provider_id = *providers.keys().nth(index).unwrap();
+            Some((provider_id, providers[&provider_id].clone()))
         }
     }
 
@@ -81,7 +101,7 @@ impl RpcBalancer {
             sleep(Duration::from_secs(1)).await; // TODO: param
         } else {
             for _ in 0..count {
-                if let Some(provider) = self.next_provider().await {
+                if let Some((provider_id, provider)) = self.next_provider().await {
                     match func(provider.clone()).await {
                         Ok(result) => {
                             info!(
@@ -95,7 +115,7 @@ impl RpcBalancer {
                                 "Provider {:?} failed: {:?}. Moving to unavailable providers.",
                                 provider, e
                             );
-                            self.move_to_unavailable_providers(provider).await;
+                            self.move_to_unavailable_providers(provider_id).await;
                         }
                     }
                 }
@@ -146,7 +166,7 @@ impl RpcBalancer {
             sleep(Duration::from_secs(1)).await; // TODO: param
         }
         for _ in 0..count {
-            if let Some(provider) = self.next_provider().await {
+            if let Some((provider_id, provider)) = self.next_provider().await {
                 match self.try_subscribe(provider.clone(), params).await {
                     Ok(subscription) => {
                         info!("Successfully subscribed with provider: {:?}", provider);
@@ -154,7 +174,7 @@ impl RpcBalancer {
                     }
                     Err(e) => {
                         warn!("Failed to subscribe with the current provider: {:?}. Switching to a different provider and retrying...", e);
-                        self.move_to_unavailable_providers(provider).await;
+                        self.move_to_unavailable_providers(provider_id).await;
                     }
                 }
             }
@@ -190,41 +210,37 @@ impl RpcBalancer {
         }
     }
 
-    async fn move_to_unavailable_providers(&self, provider: Arc<WsOrIpc>) {
+    async fn move_to_unavailable_providers(&self, provider_id: usize) {
         {
             let mut providers = self.providers.write().await;
-            if let Some(pos) = providers.iter().position(|p| Arc::ptr_eq(p, &provider)) {
-                providers.remove(pos);
-            }
+            providers.remove(&provider_id);
         }
         {
             let mut unavailable_providers = self.unavailable_providers.write().await;
-            unavailable_providers.push_back(provider);
+            unavailable_providers.push_back(provider_id);
         }
     }
 
     async fn ping_unavailable_providers(&self) {
         let mut unavailable_providers = self.unavailable_providers.write().await;
-        let mut active_providers = Vec::new();
-
-        while let Some(provider) = unavailable_providers.pop_front() {
-            match self.ping(provider.clone()).await {
-                Ok(_) => {
-                    info!("Provider is back online: {:?}", provider);
-                    active_providers.push(provider);
-                }
-                Err(error) => {
-                    info!("ping error: {:?}", error.to_string());
-                    unavailable_providers.push_back(provider);
+        let mut providers = self.providers.write().await;
+        let mut still_unavailable = VecDeque::new();
+        while let Some(provider_id) = unavailable_providers.pop_front() {
+            if let Some(provider) = providers.get(&provider_id).cloned() {
+                match self.ping(provider.clone()).await {
+                    Ok(_) => {
+                        info!("Provider is back online: {:?}", provider);
+                        providers.insert(provider_id, provider.clone());
+                    }
+                    Err(error) => {
+                        info!("ping error: {:?}", error.to_string());
+                        still_unavailable.push_back(provider_id);
+                    }
                 }
             }
         }
 
-        if !active_providers.is_empty() {
-            let mut providers = self.providers.write().await;
-            info!("Adding back {} active providers", active_providers.len());
-            providers.extend(active_providers);
-        }
+        *unavailable_providers = still_unavailable;
     }
 
     async fn ping(&self, provider: Arc<WsOrIpc>) -> Result<(), TransportError> {
