@@ -2,7 +2,9 @@
 
 ![Juggler](images/juggler.webp)
 
-Juggler is an RPC alloy provider wrapper designed to balance requests across multiple alloy providers. It manages failures, desynchronizations, and timeouts, ensuring that requests are not sent to problematic nodes until they recover. This solution is ideal for handling the cost and complexity of maintaining Ethereum nodes, providing an efficient and resilient method for load balancing between nodes.
+Juggler is an alloy-provider "custom" wrapper designed to balance multiple alloy-provider. It manages failures, timeouts, etc, ensuring that requests are not sent to problematic provider until they recover. This solution is ideal for handling the cost and complexity of maintaining Ethereum nodes, providing an efficient and resilient method for load balancing between nodes.
+
+alloy-provider: Interface with an Ethereum blockchain.
 
 ## Project Status
 
@@ -25,7 +27,7 @@ This project is still under development and is not ready for production use. Ple
 
 ## Introduction
 
-Juggler is a tool for managing multiple alloy providers, ensuring that requests are efficiently distributed among available nodes. This ensures greater service availability and resilience, mitigating common issues such as timeouts and synchronization failures.
+Juggler is a tool for managing multiple alloy-provider, ensuring that requests are efficiently distributed among available nodes.
 
 ## Motivation
 
@@ -107,7 +109,7 @@ cargo run --example subscribe_pending_transactions
 
 ## Architecture
 
-Juggler is designed to be a resilient and efficient system for handling multiple RPC alloy providers. The architecture consists of the following key components:
+Juggler is designed to be a resilient and efficient system for handling multiple alloy-provider. The architecture consists of the following key components:
 
 1. **Providers**: A `HashMap` of providers (WebSocket or IPC) managed through `Arc` and `RwLock` to ensure concurrent access.
 2. **Load Balancer**: The balancer selects the next available provider in a round-robin fashion, ensuring equitable distribution of requests.
